@@ -1,0 +1,170 @@
+---
+title: "WoW Arena"
+author: "Joshua Boehm"
+date: "2023-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+
+```{r}
+#install.packages(c("httr", "jsonlite"))
+library(httr)
+library(jsonlite)
+library(tidyverse)
+```
+ 
+# Functions to Fetch API
+
+```{r}
+
+#this function creates an access token from the blizzard api
+createAccessToken <- function(apiKey, apiSecret, region = "us") 
+{
+  response <- POST(
+    paste("https://", region, ".battle.net/oauth/token", sep = ""),
+    authenticate(apiKey, apiSecret),
+    body = list(grant_type="client_credentials")
+  )
+  return(fromJSON(content(response, "text"), flatten = TRUE))
+}
+
+#this function creates a token for the users developer ID and Secret obtained from the blizzard developer page.
+newtoken<-function(){
+# mykey<-readline(prompt = "Enter Blizzard API Key: ")
+# mysecret<-readline(prompt="Enter Blizzard API Secret: ")
+  
+mykey <- "277024c59b9a45b1a46d34974f3f2f28"
+mysecret <- "D1aGcshXoLWfRlV7q4ZAWyil65dvqXuS"
+
+mytoken<-createAccessToken(mykey,mysecret)
+quck<-as.data.frame(mytoken)
+head(quck)
+token<-quck[1,1]
+return(token)
+}
+
+newtoken()
+```
+ 
+ 
+# Fetching data with `GET()`
+
+```{r}
+#### PVP Leaderboard
+
+region <- "us"
+host_name <-  ".api.blizzard.com"
+
+website <- paste0("https://",region,host_name)
+pvp_season_id <- 34
+pvp_bracket <- "2v2"
+pvp_leaderboard <- paste0("/data/wow/pvp-season/",pvp_season_id,"/pvp-leaderboard/",pvp_bracket)
+namespace <- "dynamic-us"
+locale <- "en_US"
+access_token <- "USdz6Be6cK0fXNu68FEEWu8B9Y6pf9DhWy"
+request <- paste0(website,pvp_leaderboard,"?namespace=",namespace,"&locale=",locale,"&access_token=",newtoken())
+
+#res = GET(request)
+res = GET(request)
+
+# Turn the json data into text
+fix<-content(res, as="text", encoding = "UTF-8")
+
+data <- fromJSON(fix)
+```
+
+# Cleaning Data
+
+```{r}
+#### PVP Leaderboard
+
+#data <- fromJSON(rawToChar(res$content))
+
+leaderboard <- data.frame(data$entries)
+#leaderboard <- colnames(c("name","id","realm","faction","rating","games_won","games_lost","total_games","tier"))
+leaderboard$name <- data$entries$character$name
+leaderboard$id <- data$entries$character$id
+leaderboard$realm_name <- data$entries$character$realm$slug
+leaderboard$realm_id <- data$entries$character$realm$id
+leaderboard$faction <- tolower(data$entries$faction$type)
+leaderboard$games_won <- data$entries$season_match_statistics$won
+leaderboard$games_lost <- data$entries$season_match_statistics$lost
+leaderboard$total_games <- data$entries$season_match_statistics$played
+leaderboard$win_percentage <- round(leaderboard$games_won/leaderboard$total_games * 100, 1)
+leaderboard$tier <- data$entries$tier$id
+
+leaderboard$gender <- "test"
+leaderboard$race <- "test"
+leaderboard$active_spec <- "test"
+leaderboard$class <- "test"
+
+leaderboard <- leaderboard[,c("id","rank","name","realm_name","realm_id","faction","gender","race","active_spec","class","rating","tier","games_won","games_lost","total_games","win_percentage")]
+head(leaderboard)
+```
+
+
+```{r}
+# for (i in 1:nrow(leaderboard))
+# {
+#   x <- paste0("https://us.api.blizzard.com/profile/wow/character/",leaderboard[i,4],"/",URLencode(tolower(leaderboard[i,3])),"?namespace=profile-us&locale=en_US&access_token=",newtoken())
+#   playerinfo<-httr::GET(x)
+#   playerinfo2<-content(playerinfo, as="text")
+#   chardata<-fromJSON(playerinfo2)
+#   leaderboard[i,"gender"] <- chardata$gender$name
+#   leaderboard[i,"race"] <- chardata$race$name
+#   leaderboard[i,"active_spec"] <- chardata$active_spec$name
+#   leaderboard[i,"class"] <- chardata$character_class$name
+# }
+```
+
+# Adding Gender, Race, Spec, and Class
+
+```{r}
+# for (i in 1:nrow(leaderboard))
+# {
+#   skip_to_next <- FALSE
+#   tryCatch(
+#     {
+#       x <- paste0("https://us.api.blizzard.com/profile/wow/character/",leaderboard[i,4],"/",URLencode(tolower(leaderboard[i,3])),"?namespace=profile-us&locale=en_US&access_token=",newtoken())
+#       playerinfo<-httr::GET(x)
+#       playerinfo2<-content(playerinfo, as="text")
+#       chardata<-fromJSON(playerinfo2)
+#       leaderboard[i,"gender"] <- chardata$gender$name
+#       leaderboard[i,"race"] <- chardata$race$name
+#       leaderboard[i,"active_spec"] <- chardata$active_spec$name
+#       leaderboard[i,"class"] <- chardata$character_class$name
+#   },
+#   error=function(e){cat("ERROR :",conditionMessage(e), "\n"); skip_to_next <- TRUE})
+# }
+
+# write.table(leaderboard, file = "season_34_leaderboard.csv",sep = "\t", row.names = F)
+```
+
+# Data Visualization
+
+```{r}
+table(leaderboard$active_spec)
+
+mean.df <- aggregate(rating ~ class, leaderboard, mean)
+names(mean.df)[2] <- "Average Rating"
+mean.df
+
+leaderboard$active_role <- ifelse(leaderboard$active_spec == c("Discipline","Holy","Mistweave","Preservation","Restoration"),
+                                    "Healer",
+                                    "test")
+leaderboard$active_role <- ifelse(leaderboard$active_spec == c("Protection","Blood","Guardian","Brewmaster"), "Tank", leaderboard$active_role)
+
+leaderboard$active_role <- ifelse(leaderboard$active_role == "test", "Damage Dealer", leaderboard$active_role)
+
+leaderboard %>% filter(active_role == "Tank")
+
+leaderboard %>% filter(class != "test")
+```
+
+
+

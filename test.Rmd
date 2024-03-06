@@ -1,0 +1,32 @@
+```{r}
+#this gets the most up to date guild roster  
+x<-paste("https://us.api.blizzard.com/data/wow/guild/spirestone/battle-buddies/roster?namespace=profile-us&locale=en_US&access_token=", token, sep="")
+gr<-httr::GET(x)
+fix<-content(gr, as="text", encoding = "UTF-8"). #the same as rawToChar(gr$content)
+new<-fromJSON(fix)
+content<-as_data_frame(new$members)
+df<-as_tibble(content$character)
+roster<-df[,c(2,3)]
+```
+
+```{r}
+dftotal<-data.frame()
+i="Zayl"
+
+x<-paste("https://us.api.blizzard.com/profile/wow/character/lightbringer/", URLencode(tolower(i)), "?namespace=profile-us&locale=en_US&access_token=",token, sep="")
+playerinfo<-httr::GET(x)
+playerinfo2<-content(playerinfo, as="text")
+playerjson<-fromJSON(playerinfo2)
+df<-as.data.frame(playerjson)
+dftotal<-rbind.fill(dftotal, df)
+
+roster2<-dftotal[,c("name", "level","gender.name", "race.name", "character_class.name", "active_spec.name", "experience", "achievement_points", "last_login_timestamp", "equipped_item_level", "active_title.name", "covenant_progress.chosen_covenant.name","covenant_progress.renown_level")]
+roster3<-roster[!is.na(roster)]
+last_login_timestamp<-anydate(roster3$last_login_timestamp/1000]])
+time<-as.Date(Sys.Date())
+#extracts the last online time for each player to assess stale characters in the guild
+roster3$days.since.last.online<-difftime(as.POSIXct(time), as.POSIXct(roster3$last_login_timestamp), units="days")
+return(roster3)
+}
+```
+

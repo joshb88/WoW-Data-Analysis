@@ -1,0 +1,110 @@
+---
+title: "World of Warcraft Guild Demographics Analysis Utilizing the Blizzard API in R"
+subtitle: "An introductory lesson in accessing an API with the httr package in R"
+author: "Josh Boehm"
+date: "2023-02-23"
+output: html_document
+---
+
+# Introduction
+
+One of the more interesting ways of obtaining data for Data Science projects is through the use of APIs. An API is an Application Programming Interface and can be thought of as a tool that allows two or more programs to communicate with one another. Companies like Twitter and Yelp use APIs as does Blizzard. Instead of allowing a user direct access to the backend data, the API allows the user to extract very specific data without exposing anything sensitive.
+I chose to analyze my guild, Legal Tender’s demographic data not only because it seems fun (It was really fun) but also because there was real value to understanding where the guild had gaps in membership. When you play World of Warcraft (WoW) as religiously as I did, maximizing your opportunities to form raid groups quickly and efficiently is critical. You want to increase the odds that at any given time a player can fill a necessary role in an otherwise empty raid spot and complete a raid with as few wipes (death of the entire 25 person raid group) as possible.
+
+_You’ll notice that the demographics are very clearly from when WoW was in its Shadowlands expansion and I’ll admit this was from very early in that expansion, however, the methods remain unchanged._
+
+The first step we need to take is to gain an API Key and an API Secret from Battle.net at www.develop.battle.net where you will need to set up an account. Once completed you will be able to establish an API client and see your credentials.
+
+# Libraries/Packages
+
+Once we have our required IDs we can begin coding in R. We begin by installing and calling up the necessary R libraries for this analysis.
+
+```{r}
+# install.packages("gtools")
+# install.packages("plyr")
+# install.packages("anytime")
+# install.packages("ggplot2")
+# install.packages("httr")
+# install.packages("jsonlite")
+# install.packages("ggpubr")
+
+library(jsonlite)
+library(dplyr)
+library(httr)
+library(tibble)
+library(ggplot2)
+```
+
+# Functions to Access API
+
+Once our required packages are loaded, we create a function that will access the Blizzard API and a second function that will provide us an access token when presented with our API key and API secret.
+
+```{r}
+#this function creates an access token from the blizzard api
+createAccessToken <- function(apiKey, apiSecret, region = "us") 
+{
+  response <- POST(
+    paste("https://", region, ".battle.net/oauth/token", sep = ""),
+    authenticate(apiKey, apiSecret),
+    body = list(grant_type="client_credentials")
+  )
+  return(fromJSON(content(response, "text"), flatten = TRUE))
+}
+
+#this function creates a token for the users developer ID and Secret obtained from the blizzard developer page.
+newtoken<-function(){
+# mykey<-readline(prompt = "Enter Blizzard API Key: ")
+# mysecret<-readline(prompt="Enter Blizzard API Secret: ")
+  
+mykey <- "277024c59b9a45b1a46d34974f3f2f28"
+mysecret <- "D1aGcshXoLWfRlV7q4ZAWyil65dvqXuS"
+
+mytoken<-createAccessToken(mykey,mysecret)
+quck<-as.data.frame(mytoken)
+head(quck)
+token<-quck[1,1]
+return(token)
+}
+
+newtoken()
+```
+
+The above functions present us with our access to the API. Now, we create a few functions that reach out to different endpoints to extract necessary data. The first function extracts the guild roster itself from the “character summary” endpoint. The second function then iterates over the guild roster’s names and extracts updated player information for each member of the guild. You’ll notice that the API calls are just reformatted calls to a specific web page. In fact this is exactly what APIs are! Instead of returning HTML in the form of a web page, it returns the data.
+
+```{r}
+roster1<-function(token){
+require(plyr)
+require(dplyr)
+require(gtools)
+require(anytime)
+#this gets the most up to date guild roster  
+x<-paste("https://us.api.blizzard.com/data/wow/guild/spirestone/battle-buddies/roster?namespace=profile-us&locale=en_US&access_token=", newtoken(), sep="")
+gr<-httr::GET(x)
+fix<-content(gr, as="text", encoding = "UTF-8")
+new<-fromJSON(fix)
+content<-as_data_frame(new$members)
+df<-as_tibble(content$character)
+roster<-df[,c(2,3,4)]
+  
+#this takes the names from the guild roster and iterates through them and provides a dataframe that includes updated player information from the API
+dftotal<-data.frame()
+for (i in roster$name){
+x<-paste("https://us.api.blizzard.com/profile/wow/character/spirestone/", URLencode(tolower(i)), "?namespace=profile-us&locale=en_US&access_token=",token, sep="")
+playerinfo<-httr::GET(x)
+playerinfo2<-content(playerinfo, as="text")
+playerjson<-fromJSON(playerinfo2)
+df<-as.data.frame(playerjson)
+dftotal<-rbind.fill(dftotal, df)}
+roster2<-dftotal[,c("name", "level","gender.name", "race.name", "character_class.name", "active_spec.name", "experience", "achievement_points", "last_login_timestamp", "equipped_item_level", "active_title.name", "covenant_progress.chosen_covenant.name","covenant_progress.renown_level")]
+roster3<-roster2[!is.na(roster2)]
+last_login_timestamp<-anydate(roster3$last_login_timestamp/1000]])
+time<-as.Date(Sys.Date())
+#extracts the last online time for each player to assess stale characters in the guild
+roster3$days.since.last.online<-difftime(as.POSIXct(time), as.POSIXct(roster3$last_login_timestamp), units="days")
+return(roster3)
+}
+
+roster1(newtoken())
+```
+
+To add a little bit more data to our dataset, we create a third function which will iterate over our guild roster and extract our professions data for each member of the guild. Professions are secondary skills that involve gathering resources or crafting items from those raw materials in the game. However, such skills can come in very handy and a skilled guild leader will be able to identify which class of character should be in which profession to optimize their output.
